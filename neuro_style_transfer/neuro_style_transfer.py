@@ -1,107 +1,111 @@
-import os
-import json
 from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
 
 import torch
-import torch.utils.data as data
 from torchvision import models
 import torchvision.transforms.v2 as tfs_v2
 import torch.nn as nn
 import torch.optim as optim
-from tqdm import tqdm
 
 
-class DogDataset(data.Dataset):
-    def __init__(self, path, train=True, transform=None):
-        self.path = os.path.join(path, "train" if train else "test")
-        self.transform = transform
+class ModelStyle(nn.Module):
+    def __init__(self):
+        super().__init__()
+        _model = models.vgg19(weights=models.VGG19_Weights.DEFAULT)
+        self.mf = _model.features
+        self.mf.requires_grad_(False)
+        self.requires_grad_(False)
+        self.mf.eval()
+        self.idx_out = (0, 5, 10, 19, 28, 34)
+        self.num_style_layers = len(self.idx_out) - 1 # последний слой для контента
 
-        with open(os.path.join(self.path, "format.json"), "r") as fp:
-            self.format = json.load(fp)
+    def forward(self, x):
+        outputs = []
+        for indx, layer in enumerate(self.mf):
+            x = layer(x)
+            if indx in self.idx_out:
+                outputs.append(x.squeeze(0))
 
-        self.length = 0
-        self.files = []
-        self.targets = torch.eye(10)
-
-        for _dir, _target in self.format.items():
-            path = os.path.join(self.path, _dir)
-            list_files = os.listdir(path)
-            self.length += len(list_files)
-            self.files.extend(map(lambda _x: (os.path.join(path, _x), _target), list_files))
-
-    def __getitem__(self, item):
-        path_file, target = self.files[item]
-        t = self.targets[target]
-        img = Image.open(path_file)
-
-        if self.transform:
-            img = self.transform(img)
-
-        return img, t
-
-    def __len__(self):
-        return self.length
+        return outputs
 
 
-resnet_weights = models.ResNet50_Weights.DEFAULT
-transforms = resnet_weights.transforms()
+def get_content_loss(base_content, target):
+    return torch.mean( torch.square(base_content - target) )
 
-model = models.resnet50(weights=resnet_weights)
-model.requires_grad_(False)
-model.fc = nn.Linear(512*4, 10)
-model.fc.requires_grad_(True)
 
-# transforms = tfs_v2.Compose([tfs_v2.ToImage(), tfs_v2.ToDtype(torch.float32, scale=True)])
-d_train = DogDataset(r"\home\sonnet\projects\ML-portfolio\neuro_style_transfer\data\dogs", transform=transforms)
-train_data = data.DataLoader(d_train, batch_size=32, shuffle=True)
+def gram_matrix(x):
+  channels = x.size(dim=0)
+  g = x.view(channels, -1)
+  gram = torch.mm(g, g.mT) / g.size(dim=1)
+  return gram
 
-optimizer = optim.Adam(params=model.fc.parameters(), lr=0.001, weight_decay=0.001)
-loss_function = nn.CrossEntropyLoss()
-epochs = 3
-model.train()
+
+def get_style_loss(base_style, gram_target):
+    style_weights = [1.0, 0.8, 0.5, 0.3, 0.1]
+
+    _loss = 0
+    i = 0
+    for base, target in zip(base_style, gram_target):
+        gram_style = gram_matrix(base)
+        _loss += style_weights[i] * torch.mean(torch.square(gram_style - target))
+        i += 1
+
+    return _loss
+
+
+img = Image.open('/home/sonnet/projects/ML-portfolio/neuro_style_transfer/img.jpg').convert('RGB')
+img_style = Image.open('/home/sonnet/projects/ML-portfolio/neuro_style_transfer/img_style.jpg').convert('RGB')
+
+transforms = models.VGG19_Weights.DEFAULT.transforms()
+
+img = transforms(img).unsqueeze(0)
+img_style = transforms(img_style).unsqueeze(0)
+img_create = img.clone()
+img_create.requires_grad_(True)
+
+model = ModelStyle()
+outputs_img = model(img)
+outputs_img_style = model(img_style)
+
+gram_matrix_style = [gram_matrix(x) for x in outputs_img_style[:model.num_style_layers]]
+content_weight = 1
+style_weight = 1000
+best_loss = -1
+epochs = 1000
+
+optimizer = optim.Adam(params=[img_create], lr=0.005)
+best_img = img_create.clone()
 
 for _e in range(epochs):
-    loss_mean = 0
-    lm_count = 0
+    outputs_img_create = model(img_create)
 
-    train_tqdm = tqdm(train_data, leave=True)
-    for x_train, y_train in train_tqdm:
-        predict = model(x_train)
-        loss = loss_function(predict, y_train)
+    loss_content = get_content_loss(outputs_img_create[-1], outputs_img[-1])
+    loss_style = get_style_loss(outputs_img_create, gram_matrix_style)
+    loss = content_weight * loss_content + style_weight * loss_style
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
-        lm_count += 1
-        loss_mean = 1/lm_count * loss.item() + (1 - 1/lm_count) * loss_mean
-        train_tqdm.set_description(f"Epoch [{_e+1}/{epochs}], loss_mean={loss_mean:.3f}")
+    img_create.data.clamp_(0, 1)
 
-st = model.state_dict()
-torch.save(st, 'model_transfer_resnet.tar')
-# st = torch.load('model_transfer_resnet.tar', weights_only=False)
-# model.load_state_dict(st)
+    if loss < best_loss or best_loss < 0:
+      best_loss = loss
+      best_img = img_create.clone()
 
-d_test = DogDataset(r"C:\datasets\dogs", train=False, transform=transforms)
-test_data = data.DataLoader(d_test, batch_size=50, shuffle=False)
+    print(f'Iteration: {_e}, loss: {loss.item(): .4f}')
 
-# тестирование обученной НС
-Q = 0
-P = 0
-count = 0
-model.eval()
+x = best_img.detach().squeeze()
+low, hi = torch.amin(x), torch.amax(x)
+x = (x - low) / (hi - low) * 255.0
+x = x.permute(1, 2, 0)
+x = x.numpy()
+x = np.clip(x, 0, 255).astype('uint8')
 
-test_tqdm = tqdm(test_data, leave=True)
-for x_test, y_test in test_tqdm:
-    with torch.no_grad():
-        p = model(x_test)
-        p2 = torch.argmax(p, dim=1)
-        y = torch.argmax(y_test, dim=1)
-        P += torch.sum(p2 == y).item()
-        Q += loss_function(p, y_test).item()
-        count += 1
+image = Image.fromarray(x, 'RGB')
+image.save("result.jpg")
 
-Q /= count
-P /= len(d_test)
-print(Q)
-print(P)
+print(best_loss)
+plt.imshow(x)
+plt.show()
