@@ -1,0 +1,97 @@
+stages:
+  train:
+    cmd: python src/train.py
+    deps:
+      - src/train.py
+      - src/data.py
+      - src/model.py
+      - src/utils.py
+      - data/raw/downloaded_dataset
+    params:
+      - data
+      - augmentation
+      - model
+      - training
+      - output
+    outs:
+      - models/best_model.pth
+      - models/final_model.pth
+      - plots/training_curves.csv
+    metrics:
+      - metrics/train_metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+      - src/evaluate.py
+      - src/model.py
+      - src/utils.py
+      - models/best_model.pth
+      - data/raw/downloaded_dataset
+    params:
+      - data
+      - model
+      - evaluation
+      - output
+    outs:
+      - plots/confusion_matrix.csv
+      - plots/per_class_metrics.csv
+    metrics:
+      - metrics/evaluation_metrics.json:
+          cache: false
+      - metrics/classification_report.json:
+          cache: false
+
+  build_index:
+    cmd: python src/build_index.py
+    deps:
+      - src/build_index.py
+      - src/model.py
+      - models/best_model.pth
+      - data/raw/downloaded_dataset
+    params:
+      - data
+      - model
+      - faiss
+      - output
+    outs:
+      - faiss_index/embeddings.faiss
+      - faiss_index/image_paths.json
+      - data/embeddings/:
+          cache: false
+
+  serve:
+    cmd: python src/inference.py
+    deps:
+      - src/inference.py
+      - src/model.py
+      - models/best_model.pth
+      - faiss_index/embeddings.faiss
+      - faiss_index/image_paths.json
+    params:
+      - model
+      - inference
+      - faiss
+    frozen: true
+
+plots:
+  - training_loss:
+      x: epoch
+      y:
+        plots/training_curves.csv: [train_loss, val_loss]
+      y_label: "Loss"
+      title: "Training vs Validation Loss"
+
+  - training_accuracy:
+      x: epoch
+      y:
+        plots/training_curves.csv: [train_acc, val_acc]
+      y_label: "Accuracy"
+      title: "Training vs Validation Accuracy"
+
+  - plots/confusion_matrix.csv:
+      template: confusion
+      x: predicted
+      y: actual
+      title: "Confusion Matrix"
