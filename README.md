@@ -45,3 +45,29 @@ Fine-grained классификация птиц по фотографиям и 
 Retrieval-компонент для системы вопросов и ответов с метрикой HIT@5. Tiktoken для нарезки текста на чанки, bi-encoder `all-mpnet-base-v2` + FAISS для быстрого поиска, cross-encoder `ms-marco-MiniLM-L-12-v2` для re-ranking кандидатов.
 
 `sentence-transformers` `FAISS` `tiktoken` `transformers`
+
+---
+
+### [[RecSys toutube video>](./RecSys%20toutube%20video/) -- Work in progress
+
+Рекомендательная система для видео с YouTube, построенная по двухступенчатой архитектуре: генерация кандидатов + ранжирование.
+
+Данные собраны через YouTube Data API 
+
+Содержат:
+- title, description, tags, channel, просмотры, дату публикации
+- Пользовательские взаимодействия (реальные или симулированные)
+
+**Подход** \
+Retrieval:
+- TF-IDF + cosine similarity
+- отбор ~100 кандидатов
+
+Ranking:
+- CatBoost/LightGBM/XGBoost
+- учёт similarity, популярности, новизны
+
+Метрики:
+- Precision@K
+- Recall@K
+- NDCG@K

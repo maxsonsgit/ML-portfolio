@@ -54,8 +54,8 @@ def get_style_loss(base_style, gram_target):
     return _loss
 
 
-img = Image.open('/home/sonnet/projects/ML-portfolio/neuro_style_transfer/img.jpg').convert('RGB')
-img_style = Image.open('/home/sonnet/projects/ML-portfolio/neuro_style_transfer/img_style.jpg').convert('RGB')
+img = Image.open('./img.jpg').convert('RGB')
+img_style = Image.open('./img_style.jpg').convert('RGB')
 
 transforms = models.VGG19_Weights.DEFAULT.transforms()
 
@@ -72,7 +72,7 @@ gram_matrix_style = [gram_matrix(x) for x in outputs_img_style[:model.num_style_
 content_weight = 1
 style_weight = 1000
 best_loss = -1
-epochs = 1000
+epochs = 100
 
 optimizer = optim.Adam(params=[img_create], lr=0.005)
 best_img = img_create.clone()
@@ -104,7 +104,7 @@ x = x.numpy()
 x = np.clip(x, 0, 255).astype('uint8')
 
 image = Image.fromarray(x, 'RGB')
-image.save("result.jpg")
+image.save("/result.jpg")
 
 print(best_loss)
 plt.imshow(x)
